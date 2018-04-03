@@ -7,6 +7,8 @@ gateway into your Drupal Commerce shop.
 
 ## Basic Installation
 
+Select Payment method sadad in payment conifugartion in commerce 
+
  # On PayFort account:
 
 1. Go to security settings and configure settings.
