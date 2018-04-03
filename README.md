@@ -1,9 +1,8 @@
-# Commerce PayFort
+# Commerce Sadad
 
 ## Introduction
 
-**Commerce PayFort** is [Drupal Commerce](https://drupal.org/project/commerce)
-module that integrates the [PayFort](http://payfort.com) payement
+module that integrates the [Sadad](http://payfort.com) payement
 gateway into your Drupal Commerce shop.
 
 ## Basic Installation
@@ -23,15 +22,12 @@ gateway into your Drupal Commerce shop.
 
 4. Done.
 
- # On Drupal commerce site:
-
- 1. Download and enable the module from:
-      https://www.drupal.org/sandbox/anas_maw/2797129
+ 
 
  2. Configure the payment rule (the `edit` link) with your credentials.   
 
  3. Done.
 
 ## Contact details
-Anas Mawlawi
-anas.mawlawi89@gmail.com
+Anjum Dar
+anjumdar7864@gmail.com
