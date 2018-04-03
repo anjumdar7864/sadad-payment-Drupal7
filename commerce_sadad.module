@@ -1,0 +1,282 @@
+<?php
+
+/**
+ * @file
+ * Implements PayFort Website Payments Standard in Drupal Commerce checkout.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_sadad_menu() {
+  $items = array();
+
+  // Define an always accessible path to receive payfort response.
+  $items['commerce_sadad/response'] = array(
+    'page callback' => 'commerce_sadad_process_response',
+    // Always allow PayFort response.
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  // Define an always accessible path to redirect user after payfort response.
+  $items['commerce_sadad/redirect'] = array(
+    'page callback' => 'commerce_sadad_process_redirect',
+    // Always allow PayFort redirect.
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+/**
+ * Redirect user to checkout review page.
+ */
+function commerce_sadad_process_redirect() {
+  if (isset($_GET['merchant_extra']) && $_GET['merchant_extra']) {
+    drupal_goto('/checkout/' . $_GET['merchant_extra'] . '/review');
+  }
+  else {
+    drupal_goto('<front>');
+  }
+}
+
+/**
+ * Update order status.
+ */
+function commerce_sadad_process_response() {
+  // Get response data.
+  if (!isset($_POST) || empty($_POST)) {
+    return FALSE;
+  }
+  $response_data = $_POST;
+  $payment_method = commerce_payment_method_instance_load('Sadad|commerce_payment_sadad');
+  $signature = $response_data['signature'];
+  unset($response_data['signature']);
+  $response_data['payment_option'] = 'SADAD';
+  $generated_signature = commerce_payfort_generate_signature($response_data, $payment_method['settings']['sha_response_phrase'], $payment_method['settings']['sha_type']);
+
+  if ($generated_signature != $signature) {
+    return FALSE;
+  }
+
+  // Load order.
+  if (!empty($response_data['merchant_extra'])) {
+    $order = commerce_order_load($response_data['merchant_extra']);
+  }
+  else {
+    $order = FALSE;
+  }
+
+  if ($order) {
+    // Create a new payment transaction for the order.
+    $transaction = commerce_payment_transaction_new('sadad', $order->order_id);
+    $transaction->instance_id = $payment_method['instance_id'];
+    $transaction->amount = $response_data['amount'];
+    $transaction->currency_code = $response_data['currency'];
+    $transaction->remote_status = $response_data['status'];
+    $transaction->remote_id = isset($response_data['fort_id']) ? $response_data['fort_id'] : 'Transaction failed';
+    $transaction->message = $response_data['response_message'];
+    $transaction->payload[REQUEST_TIME] = json_encode($response_data);
+
+    switch ($response_data['status']) {
+      case '14':
+        $transaction->status = COMMERCE_PAYMENT_STATUS_SUCCESS;
+        break;
+
+      case '00':
+      case '10':
+      case '13':
+      case '15':
+        $transaction->status = COMMERCE_PAYMENT_STATUS_FAILURE;
+        break;
+
+    }
+
+    commerce_payment_transaction_save($transaction);
+
+    if ($transaction->status == COMMERCE_PAYMENT_STATUS_SUCCESS) {
+      commerce_payment_redirect_pane_next_page($order);
+    }
+    else {
+      commerce_payment_redirect_pane_previous_page($order);
+    }
+  }
+}
+
+/**
+ * Implements hook_commerce_payment_method_info().
+ */
+function commerce_sadad_commerce_payment_method_info() {
+  $payment_methods = array();
+
+  $payment_methods['sadad'] = array(
+    'base' => 'commerce_sadad',
+    'title' => t('Sadad Payment'),
+    'short_title' => t('Sadad processing'),
+    'display_title' => t('Sadad'),
+    'description' => t('Integrates Sadad processing payment'),
+    'offsite' => TRUE,
+    'offsite_autoredirect' => TRUE,
+  );
+
+  return $payment_methods;
+}
+
+/**
+ * Payment method callback: settings form.
+ */
+function commerce_sadad_settings_form($settings = array(), $payment_method = NULL) {
+  $form = array();
+
+  $form['authorization_url'] = array(
+    '#type' => 'radios',
+    '#title' => t('Authorization URL'),
+    '#description' => t('Please choose payfort authorization url from the following list:'),
+    '#options' => array(
+      'https://sbcheckout.payfort.com/FortAPI/paymentPage' => t('Test: https://sbcheckout.payfort.com/FortAPI/paymentPage'),
+      'https://checkout.payfort.com/FortAPI/paymentPage' => t('Production: https://checkout.payfort.com/FortAPI/paymentPage'),
+    ),
+    '#default_value' => isset($settings['authorization_url']) ? $settings['authorization_url'] : "https://sbcheckout.payfort.com/FortAPI/paymentPage" ,
+    '#required' => TRUE,
+  );
+
+  $form['merchantId'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Merchant ID'),
+    '#description' => t('Payfort payment Merchant ID.'),
+    '#default_value' => isset($settings['merchantId']) ? $settings['merchantId'] : "",
+    '#required' => TRUE,
+  );
+
+  $form['access_code'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Access code'),
+    '#description' => t('Payfort payment access code.'),
+    '#default_value' => isset($settings['access_code']) ? $settings['access_code'] : "",
+    '#required' => TRUE,
+  );
+
+  $form['sha_type'] = array(
+    '#type' => 'radios',
+    '#title' => t('SHA Type'),
+    '#description' => t('Please choose payfort SHA type from the following list:'),
+    '#options' => array(
+      'sha1' => t('SHA-128'),
+      'sha256' => t('SHA-256'),
+      'sha512' => t('SHA-512'),
+    ),
+    '#default_value' => isset($settings['sha_type']) ? $settings['sha_type'] : "sha1" ,
+    '#required' => TRUE,
+  );
+
+  $form['sha_request_phrase'] = array(
+    '#type' => 'textfield',
+    '#title' => t('SHA Request Phrase'),
+    '#description' => t('Payfort payment SHA request phrase.'),
+    '#default_value' => isset($settings['sha_request_phrase']) ? $settings['sha_request_phrase'] : "",
+    '#required' => TRUE,
+  );
+
+  $form['sha_response_phrase'] = array(
+    '#type' => 'textfield',
+    '#title' => t('SHA Response Phrase'),
+    '#description' => t('Payfort payment SHA request phrase.'),
+    '#default_value' => isset($settings['sha_response_phrase']) ? $settings['sha_response_phrase'] : "",
+    '#required' => TRUE,
+  );
+
+  return $form;
+}
+
+/**
+ * Payment method callback: redirect form.
+ */
+function commerce_sadad_redirect_form($form, &$form_state, $order, $payment_method) {
+
+
+  global $language;
+  // Get url.
+  $request_url = $payment_method['settings']['authorization_url'];
+  
+  // Prepare request data.
+  $request_data = array(
+    'access_code' => 'Lev9uNwYXD96MpaMHVwV',
+    'amount' => $order->commerce_order_total[LANGUAGE_NONE][0]['amount'],
+    'currency' => $order->commerce_order_total[LANGUAGE_NONE][0]['currency_code'],
+    'customer_email' => $order->mail,
+    'merchant_reference' => $order->order_number . "_" . time(),
+    'order_description' => $order->order_number,
+    'language' => $language->language,
+    'merchant_identifier' => $payment_method['settings']['merchantId'],
+    'command' => 'PURCHASE',
+    'merchant_extra' => $order->order_number,
+  );
+
+  // Generate signature.
+  $request_data['payment_option'] = 'SADAD';
+  $signature = commerce_payfort_generate_signature(
+    $request_data,
+    $payment_method['settings']['sha_request_phrase'],
+    $payment_method['settings']['sha_type']
+  );
+  $request_data['signature'] = $signature;
+   // print_r($signature);exit;
+  if ($request_data['amount'] > 0) {
+    // Create form and send request, taken from documentaion:
+    // (https://testfort.payfort.com/api/#authorization-purchase-request).
+    echo "<html xmlns='http://www.w3.org/1999/xhtml'>\n<head></head>\n<body>\n";
+    echo "<form action='$request_url' method='post' name='frm'>\n";
+    foreach ($request_data as $a => $b) {
+      echo "\t<input type='hidden' name='" . htmlentities($a) . "' value='" . htmlentities($b) . "'>\n";
+    }
+    echo "\t<script type='text/javascript'>\n";
+    echo "\t\tdocument.frm.submit();\n";
+    echo "\t</script>\n";
+    echo "</form>\n</body>\n</html>";
+  }
+  else {
+    commerce_payment_redirect_pane_next_page($order);
+  }
+}
+
+/**
+ * Payment method callback: redirect form return validation.
+ */
+function commerce_sadad_redirect_form_validate($order, $payment_method) {
+  $required_settings = array(
+    'merchantId',
+    'access_code',
+    'sha_request_phrase',
+    'sha_response_phrase',
+  );
+  foreach ($required_settings as $key => $value) {
+    if (empty($payment_method['settings'][$key])) {
+      drupal_set_message(t('Payfort Checkout is not configured for use. Please contact an administrator to resolve this issue.'), 'error');
+      return FALSE;
+    }
+  }
+}
+
+/**
+ * Generate payfort signature.
+ */
+function commerce_sadad_generate_signature($data, $phrase, $hash) {
+  ksort($data);
+  $signature = $phrase;
+  foreach ($data as $key => $value) {
+    $signature .= $key . '=' . $value;
+  }
+  $signature .= $phrase;
+  return hash($hash, $signature);
+}
+
+ function convertFortAmount($amount, $currencyCode)
+    {
+        $new_amount = 0;
+        $total = $amount;
+        $decimalPoints    = $this->getCurrencyDecimalPoints($currencyCode);
+        $new_amount = round($total, $decimalPoints) * (pow(10, $decimalPoints));
+        return $new_amount;
+    }
